@@ -134,6 +134,7 @@ struct rules_t
 		dict<string, int> min_limits, max_limits;
 		bool or_next_if_better, make_transp, make_outreg;
 		char shuffle_enable;
+		string memattr;
 	};
 
 	dict<IdString, vector<bram_t>> brams;
@@ -327,6 +328,11 @@ struct rules_t
 				continue;
 			}
 
+			if (GetSize(tokens) == 3 && tokens[0] == "attribute") {
+				data.memattr = tokens[2].c_str();
+				continue;
+			}
+
 			syntax_error();
 		}
 	}
@@ -403,6 +409,7 @@ bool replace_cell(Cell *cell, const rules_t &rules, const rules_t::bram_t &bram,
 	int mem_abits = cell->getParam("\\ABITS").as_int();
 	int mem_width = cell->getParam("\\WIDTH").as_int();
 	// int mem_offset = cell->getParam("\\OFFSET").as_int();
+        bool memory_attribute = cell->attributes["\\ram_style"].decode_string()=="block";
 
 	bool cell_init = !SigSpec(cell->getParam("\\INIT")).is_fully_undef();
 	vector<Const> initdata;
@@ -796,7 +803,7 @@ grow_read_ports:;
 			if (!match_properties.count(it.first))
 				log_error("Unknown property '%s' in match rule for bram type %s.\n",
 						it.first.c_str(), log_id(match.name));
-			if (match_properties[it.first] >= it.second)
+			if (match_properties[it.first] >= it.second || (memory_attribute && match.memattr == "block"))
 				continue;
 			log("    Rule for bram type %s rejected: requirement 'min %s %d' not met.\n",
 					log_id(match.name), it.first.c_str(), it.second);
@@ -997,6 +1004,8 @@ void handle_cell(Cell *cell, const rules_t &rules)
 	log("Processing %s.%s:\n", log_id(cell->module), log_id(cell));
 
 	bool cell_init = !SigSpec(cell->getParam("\\INIT")).is_fully_undef();
+	std::string attribute = cell->attributes["\\ram_style"].decode_string();
+	bool memory_attribute = (attribute == "block");
 
 	dict<string, int> match_properties;
 	match_properties["words"]  = cell->getParam("\\SIZE").as_int();
@@ -1014,6 +1023,9 @@ void handle_cell(Cell *cell, const rules_t &rules)
 
 	pool<pair<IdString, int>> failed_brams;
 	dict<pair<int, int>, tuple<int, int, int>> best_rule_cache;
+
+	if (cell->attributes.count("\\ram_style") > 0 && memory_attribute)
+		log("  Found memory attribute '%s' in object %s.\n", attribute.c_str(), cell->name.c_str());
 
 	for (int i = 0; i < GetSize(rules.matches); i++)
 	{
@@ -1080,7 +1092,7 @@ void handle_cell(Cell *cell, const rules_t &rules)
 				if (!match_properties.count(it.first))
 					log_error("Unknown property '%s' in match rule for bram type %s.\n",
 							it.first.c_str(), log_id(match.name));
-				if (match_properties[it.first] >= it.second)
+				if (match_properties[it.first] >= it.second || (memory_attribute && match.memattr == "block"))
 					continue;
 				log("    Rule #%d for bram type %s (variant %d) rejected: requirement 'min %s %d' not met.\n",
 						i+1, log_id(bram.name), bram.variant, it.first.c_str(), it.second);
@@ -1241,6 +1253,9 @@ struct MemoryBramPass : public Pass {
 		log("\n");
 		log("A match containing the command 'shuffle_enable A' will re-organize\n");
 		log("the data bits to accommodate the enable pattern of port A.\n");
+		log("\n");
+		log("A match containing the command 'attribute' will bypass min bits/efficiency\n");
+		log("to select the type of memory.\n");
 		log("\n");
 	}
 	void execute(vector<string> args, Design *design) YS_OVERRIDE

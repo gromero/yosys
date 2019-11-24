@@ -85,6 +85,7 @@ match $__XILINX_RAMB18_SDP
   min efficiency 5
   shuffle_enable B
   make_transp
+  attribute ram_style block
   or_next_if_better
 endmatch
 
