@@ -134,7 +134,7 @@ struct rules_t
 		dict<string, int> min_limits, max_limits;
 		bool or_next_if_better, make_transp, make_outreg;
 		char shuffle_enable;
-		string memattr;
+		std::string memattr;
 	};
 
 	dict<IdString, vector<bram_t>> brams;
@@ -368,6 +368,20 @@ struct rules_t
 	}
 };
 
+bool check_memory_attribute(Cell *cell, std::string match)
+{
+	std::string memory_attribute = cell->attributes["\\ram_style"].decode_string();
+	bool attribute_set_match = 0;
+
+	if (memory_attribute != "")
+	{
+		attribute_set_match = match.compare(memory_attribute);
+		if (!attribute_set_match)
+			return true;
+	}
+	return false;
+}
+
 bool replace_cell(Cell *cell, const rules_t &rules, const rules_t::bram_t &bram, const rules_t::match_t &match, dict<string, int> &match_properties, int mode)
 {
 	Module *module = cell->module;
@@ -409,7 +423,6 @@ bool replace_cell(Cell *cell, const rules_t &rules, const rules_t::bram_t &bram,
 	int mem_abits = cell->getParam("\\ABITS").as_int();
 	int mem_width = cell->getParam("\\WIDTH").as_int();
 	// int mem_offset = cell->getParam("\\OFFSET").as_int();
-        bool memory_attribute = cell->attributes["\\ram_style"].decode_string()=="block";
 
 	bool cell_init = !SigSpec(cell->getParam("\\INIT")).is_fully_undef();
 	vector<Const> initdata;
@@ -795,7 +808,6 @@ grow_read_ports:;
 		match_properties["dcells"] = ((mem_width + bram.dbits - 1) / bram.dbits);
 		match_properties["acells"] = ((mem_size + (1 << bram.abits) - 1) / (1 << bram.abits));
 		match_properties["cells"] = match_properties["dcells"] *  match_properties["acells"] * match_properties["dups"];
-
 		log("      Updated properties: dups=%d waste=%d efficiency=%d\n",
 				match_properties["dups"], match_properties["waste"], match_properties["efficiency"]);
 
@@ -803,7 +815,9 @@ grow_read_ports:;
 			if (!match_properties.count(it.first))
 				log_error("Unknown property '%s' in match rule for bram type %s.\n",
 						it.first.c_str(), log_id(match.name));
-			if (match_properties[it.first] >= it.second || (memory_attribute && match.memattr == "block"))
+			if (match_properties[it.first] >= it.second)
+				continue;
+			if (check_memory_attribute(cell, match.memattr))
 				continue;
 			log("    Rule for bram type %s rejected: requirement 'min %s %d' not met.\n",
 					log_id(match.name), it.first.c_str(), it.second);
@@ -1004,8 +1018,7 @@ void handle_cell(Cell *cell, const rules_t &rules)
 	log("Processing %s.%s:\n", log_id(cell->module), log_id(cell));
 
 	bool cell_init = !SigSpec(cell->getParam("\\INIT")).is_fully_undef();
-	std::string attribute = cell->attributes["\\ram_style"].decode_string();
-	bool memory_attribute = (attribute == "block");
+	std::string cell_attribute = cell->attributes["\\ram_style"].decode_string();
 
 	dict<string, int> match_properties;
 	match_properties["words"]  = cell->getParam("\\SIZE").as_int();
@@ -1024,8 +1037,9 @@ void handle_cell(Cell *cell, const rules_t &rules)
 	pool<pair<IdString, int>> failed_brams;
 	dict<pair<int, int>, tuple<int, int, int>> best_rule_cache;
 
-	if (cell->attributes.count("\\ram_style") > 0 && memory_attribute)
-		log("  Found memory attribute '%s' in object %s.\n", attribute.c_str(), cell->name.c_str());
+	if (cell_attribute != "")
+		log("  Found memory attribute '%s' in object %s.\n", cell_attribute.c_str(), 
+			cell->name.c_str());
 
 	for (int i = 0; i < GetSize(rules.matches); i++)
 	{
@@ -1092,7 +1106,9 @@ void handle_cell(Cell *cell, const rules_t &rules)
 				if (!match_properties.count(it.first))
 					log_error("Unknown property '%s' in match rule for bram type %s.\n",
 							it.first.c_str(), log_id(match.name));
-				if (match_properties[it.first] >= it.second || (memory_attribute && match.memattr == "block"))
+				if (match_properties[it.first] >= it.second)
+					continue;
+				if (check_memory_attribute(cell, match.memattr))
 					continue;
 				log("    Rule #%d for bram type %s (variant %d) rejected: requirement 'min %s %d' not met.\n",
 						i+1, log_id(bram.name), bram.variant, it.first.c_str(), it.second);
