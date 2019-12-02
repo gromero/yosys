@@ -134,7 +134,8 @@ struct rules_t
 		dict<string, int> min_limits, max_limits;
 		bool or_next_if_better, make_transp, make_outreg;
 		char shuffle_enable;
-		std::string memattr;
+		IdString attr;
+		Const value;
 	};
 
 	dict<IdString, vector<bram_t>> brams;
@@ -328,8 +329,10 @@ struct rules_t
 				continue;
 			}
 
-			if (GetSize(tokens) == 3 && tokens[0] == "attribute") {
-				data.memattr = tokens[2].c_str();
+			if (GetSize(tokens) >= 2 && tokens[0] == "attribute") {
+				data.attr = RTLIL::escape_id(tokens[1]);
+				if (GetSize(tokens) > 2)
+					data.value = tokens[2];
 				continue;
 			}
 
@@ -367,20 +370,6 @@ struct rules_t
 		infile.close();
 	}
 };
-
-bool check_memory_attribute(Cell *cell, std::string match)
-{
-	std::string memory_attribute = cell->attributes["\\ram_style"].decode_string();
-	bool attribute_set_match = 0;
-
-	if (memory_attribute != "")
-	{
-		attribute_set_match = match.compare(memory_attribute);
-		if (!attribute_set_match)
-			return true;
-	}
-	return false;
-}
 
 bool replace_cell(Cell *cell, const rules_t &rules, const rules_t::bram_t &bram, const rules_t::match_t &match, dict<string, int> &match_properties, int mode)
 {
@@ -808,6 +797,7 @@ grow_read_ports:;
 		match_properties["dcells"] = ((mem_width + bram.dbits - 1) / bram.dbits);
 		match_properties["acells"] = ((mem_size + (1 << bram.abits) - 1) / (1 << bram.abits));
 		match_properties["cells"] = match_properties["dcells"] *  match_properties["acells"] * match_properties["dups"];
+
 		log("      Updated properties: dups=%d waste=%d efficiency=%d\n",
 				match_properties["dups"], match_properties["waste"], match_properties["efficiency"]);
 
@@ -816,8 +806,6 @@ grow_read_ports:;
 				log_error("Unknown property '%s' in match rule for bram type %s.\n",
 						it.first.c_str(), log_id(match.name));
 			if (match_properties[it.first] >= it.second)
-				continue;
-			if (check_memory_attribute(cell, match.memattr))
 				continue;
 			log("    Rule for bram type %s rejected: requirement 'min %s %d' not met.\n",
 					log_id(match.name), it.first.c_str(), it.second);
@@ -832,6 +820,23 @@ grow_read_ports:;
 			log("    Rule for bram type %s rejected: requirement 'max %s %d' not met.\n",
 					log_id(match.name), it.first.c_str(), it.second);
 			return false;
+		}
+
+		if (!match.attr.empty()) {
+			auto it = cell->attributes.find(match.attr);
+			if (it == cell->attributes.end()) {
+				if (!match.value.empty())
+					log("    Rule for bram type %s rejected: requirement 'attribute %s=\"%s\"' not met.\n",
+							log_id(match.name), log_id(match.attr), match.value.decode_string().c_str());
+					return false;
+			}
+			else {
+				if (it->second != match.value) {
+					log("    Rule for bram type %s rejected: requirement 'attribute %s=\"%s\"' not met.\n",
+							log_id(match.name), log_id(match.attr), match.value.decode_string().c_str());
+					return false;
+				}
+			}
 		}
 
 		if (mode == 1)
@@ -1018,7 +1023,6 @@ void handle_cell(Cell *cell, const rules_t &rules)
 	log("Processing %s.%s:\n", log_id(cell->module), log_id(cell));
 
 	bool cell_init = !SigSpec(cell->getParam("\\INIT")).is_fully_undef();
-	std::string cell_attribute = cell->attributes["\\ram_style"].decode_string();
 
 	dict<string, int> match_properties;
 	match_properties["words"]  = cell->getParam("\\SIZE").as_int();
@@ -1036,10 +1040,6 @@ void handle_cell(Cell *cell, const rules_t &rules)
 
 	pool<pair<IdString, int>> failed_brams;
 	dict<pair<int, int>, tuple<int, int, int>> best_rule_cache;
-
-	if (cell_attribute != "")
-		log("  Found memory attribute '%s' in object %s.\n", cell_attribute.c_str(), 
-			cell->name.c_str());
 
 	for (int i = 0; i < GetSize(rules.matches); i++)
 	{
@@ -1108,8 +1108,6 @@ void handle_cell(Cell *cell, const rules_t &rules)
 							it.first.c_str(), log_id(match.name));
 				if (match_properties[it.first] >= it.second)
 					continue;
-				if (check_memory_attribute(cell, match.memattr))
-					continue;
 				log("    Rule #%d for bram type %s (variant %d) rejected: requirement 'min %s %d' not met.\n",
 						i+1, log_id(bram.name), bram.variant, it.first.c_str(), it.second);
 				goto next_match_rule;
@@ -1126,6 +1124,24 @@ void handle_cell(Cell *cell, const rules_t &rules)
 				log("    Rule #%d for bram type %s (variant %d) rejected: requirement 'max %s %d' not met.\n",
 						i+1, log_id(bram.name), bram.variant, it.first.c_str(), it.second);
 				goto next_match_rule;
+			}
+
+			if (!match.attr.empty()) {
+				auto it = cell->attributes.find(match.attr);
+				if (it == cell->attributes.end()) {
+					if (!match.value.empty()) {
+						log("    Rule for bram type %s rejected: requirement 'attribute %s=\"%s\"' not met.\n",
+								log_id(match.name), log_id(match.attr), match.value.decode_string().c_str());
+						goto next_match_rule;
+					}
+				}
+				else {
+					if (it->second != match.value) {
+						log("    Rule for bram type %s rejected: requirement 'attribute %s=\"%s\"' not met.\n",
+								log_id(match.name), log_id(match.attr), match.value.decode_string().c_str());
+						goto next_match_rule;
+					}
+				}
 			}
 
 			log("    Rule #%d for bram type %s (variant %d) accepted.\n", i+1, log_id(bram.name), bram.variant);
@@ -1253,6 +1269,11 @@ struct MemoryBramPass : public Pass {
 		log("    dcells  .......  number of cells in 'data-direction'\n");
 		log("    cells  ........  total number of cells (acells*dcells*dups)\n");
 		log("\n");
+		log("A match containing the condition 'attribute' followed by a name and optional\n");
+		log("value requires that the memory contains the given attribute name and value\n");
+		log("(if specified) or that the attribute is not present or the value is empty (if\n");
+		log("value is not specified\n).");
+		log("\n");
 		log("The interface for the created bram instances is derived from the bram\n");
 		log("description. Use 'techmap' to convert the created bram instances into\n");
 		log("instances of the actual bram cells of your target architecture.\n");
@@ -1269,9 +1290,6 @@ struct MemoryBramPass : public Pass {
 		log("\n");
 		log("A match containing the command 'shuffle_enable A' will re-organize\n");
 		log("the data bits to accommodate the enable pattern of port A.\n");
-		log("\n");
-		log("A match containing the command 'attribute' will bypass min bits/efficiency\n");
-		log("to select the type of memory.\n");
 		log("\n");
 	}
 	void execute(vector<string> args, Design *design) YS_OVERRIDE
