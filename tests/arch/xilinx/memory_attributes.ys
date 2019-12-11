@@ -1,0 +1,30 @@
+# RAMB18E1 Converted to registers
+read_verilog ../common/memory_attributes/ram_test_logic_block.v
+hierarchy -top ram_test_logic_block
+synth_xilinx -abc9 -flatten
+cd ram_test_logic_block # Constrain all select calls below inside the top module
+select -assert-count 0 t:RAMB18E1
+
+# Small register array to BRAM
+design -reset
+read_verilog ../common/memory_attributes/ram_test_ram_block.v
+hierarchy -top ram_test_ram_block
+synth_xilinx -abc9 -flatten
+cd ram_test_ram_block # Constrain all select calls below inside the top module
+select -assert-count 1 t:RAMB18E1
+
+# Same as above, but different attribute
+design -reset
+read_verilog ../common/memory_attributes/ram_test_ram_style.v
+hierarchy -top ram_test_ram_style
+synth_xilinx -abc9 -flatten
+cd ram_test_ram_style # Constrain all select calls below inside the top module
+select -assert-count 1 t:RAMB18E1
+
+# Wrong parameter set
+design -reset
+read_verilog ../common/memory_attributes/ram_test_wrong_param.v
+hierarchy -top ram_test_wrong_param
+synth_xilinx -abc9 -flatten
+cd ram_test_wrong_param # Constrain all select calls below inside the top module
+select -assert-count 0 t:RAMB18E1
