@@ -81,18 +81,18 @@ match $__XILINX_RAMB36_SDP
 endmatch
 
 match $__XILINX_RAMB18_SDP
-  min bits 1024
+  min bits 4096
   min efficiency 5
   shuffle_enable B
   make_transp
-  !attribute ram_style logic_block
+  attribute ram_style
   or_next_if_better
 endmatch
 
 match $__XILINX_RAMB18_SDP
   shuffle_enable B
   make_transp
-  attribute ram_block 1 ram_style block
+  attribute ram_style block
   or_next_if_better
 endmatch
 
